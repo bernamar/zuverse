@@ -11,33 +11,42 @@
  * Requests use node:https rather than fetch: a long, non-streamed answer
  * (a video read, an image) can take longer than fetch's 5-minute wait for
  * response headers.
+ *
+ * When GEMINI_API_KEY and KIE_API_KEY are both set, the same functions talk to
+ * Gemini and Kie instead (src/providers.mjs). Callers keep these signatures.
  */
 
 import https from "node:https";
 import { URL } from "node:url";
+import { ZurelayError } from "./errors.mjs";
+import {
+  geminiChatText,
+  geminiToolRaw,
+  kieCreateVideo,
+  kieDownloadVideo,
+  kieGetVideo,
+  kieMakeImage,
+  modelMap,
+  useOwnKeys,
+} from "./providers.mjs";
+
+export { ZurelayError } from "./errors.mjs";
+export { activeProvider, checkGeminiKey, checkKieKey, topUpUrl, useOwnKeys } from "./providers.mjs";
 
 export const ZURELAY_BASE_URL = (process.env.ZURELAY_BASE_URL || "https://api.zurelay.com/v1").replace(/\/+$/, "");
 export const SIGNUP_URL = "https://zurelay.com";
 export const BILLING_URL = "https://zurelay.com/app/billing";
 
+/** Model ids for the active provider. Own keys (Gemini + Kie) win when both are set. */
 export const MODELS = {
-  read: "gemini-3.1-pro",
-  text: "gemini-3.8-flash",
-  image: "gpt-image-2.5-sunburst",
-  video: "seedance-2.5",
+  get read() { return modelMap().read; },
+  get text() { return modelMap().text; },
+  get image() { return modelMap().image; },
+  get video() { return modelMap().video; },
 };
 
 /** Answers in the same family when the image model is down (Zurelay tries them in order). */
 const IMAGE_BACKUPS = { "gpt-image-2.5-sunburst": ["gpt-image-2.5-flare"] };
-
-export class ZurelayError extends Error {
-  constructor(message, { status = 0, code = "", retryAfter = 0 } = {}) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.retryAfter = retryAfter;
-  }
-}
 
 export function apiKey() {
   const key = String(process.env.ZURELAY_API_KEY ?? "").trim();
@@ -177,8 +186,9 @@ export async function toolCall({ model, system, user, tool, parse, maxTokens, te
   if (maxTokens) body.max_tokens = maxTokens;
   if (typeof temperature === "number") body.temperature = temperature;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { json } = await api("POST", "/chat/completions", { body, timeoutMs, headers: { "x-zurelay-fallback": "off" }, label });
-    const raw = toolArgumentsText(json, tool.name);
+    const raw = useOwnKeys()
+      ? await geminiToolRaw({ model, system, user, tool, maxTokens, temperature, timeoutMs, label })
+      : toolArgumentsText((await api("POST", "/chat/completions", { body, timeoutMs, headers: { "x-zurelay-fallback": "off" }, label })).json, tool.name);
     let value = null;
     try {
       value = raw ? parse(raw) : null;
@@ -194,6 +204,9 @@ export async function toolCall({ model, system, user, tool, parse, maxTokens, te
 /** A short text answer (smart routing on: any close model may answer). Returns "" on failure. */
 export async function chatText({ model = MODELS.text, messages, maxTokens = 2048, temperature, responseFormat, timeoutMs = 120_000, label }) {
   try {
+    if (useOwnKeys()) {
+      return await geminiChatText({ model, messages, maxTokens, temperature, responseFormat, timeoutMs, label });
+    }
     const body = { model, messages, max_tokens: maxTokens };
     if (typeof temperature === "number") body.temperature = temperature;
     if (responseFormat) body.response_format = responseFormat;
@@ -217,6 +230,7 @@ export async function chatText({ model = MODELS.text, messages, maxTokens = 2048
  * AI"), which the video model's filter reads; base64 answers come without them.
  */
 export async function makeImage({ prompt, images = [], size, quality = "medium", outputFormat = "jpeg", model = MODELS.image, label = "image" }) {
+  if (useOwnKeys()) return kieMakeImage({ prompt, images, size, quality, outputFormat, model, label });
   const body = { model, prompt, n: 1, response_format: "url", quality, output_format: outputFormat };
   if (IMAGE_BACKUPS[model]) body.models = IMAGE_BACKUPS[model];
   if (size) body.size = size;
@@ -243,18 +257,21 @@ export async function makeImage({ prompt, images = [], size, quality = "medium",
 
 /** Starts a video. Not retried after a request that may have been accepted. */
 export async function createVideo(body) {
+  if (useOwnKeys()) return kieCreateVideo(body);
   const { json } = await api("POST", "/videos", { body, timeoutMs: 300_000, headers: { "x-zurelay-fallback": "off" }, retries: 3, label: "video" });
   if (!json?.id) throw new ZurelayError("Zurelay didn't return a video id.");
   return json;
 }
 
 export async function getVideo(id) {
+  if (useOwnKeys()) return kieGetVideo(id);
   const { json } = await api("GET", `/videos/${encodeURIComponent(id)}`, { timeoutMs: 60_000, retries: 6, label: "video status" });
   return json;
 }
 
 /** The finished MP4 as bytes. */
 export async function downloadVideo(id) {
+  if (useOwnKeys()) return kieDownloadVideo(id);
   const { buffer } = await api("GET", `/videos/${encodeURIComponent(id)}/content`, { timeoutMs: 600_000, retries: 3, label: "video download" });
   return buffer;
 }

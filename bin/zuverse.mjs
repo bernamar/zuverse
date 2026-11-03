@@ -28,9 +28,9 @@ const { listProjects, openProject, projectsRoot } = await import("../src/project
 const pipeline = await import("../src/pipeline.mjs");
 const { directionRules, planFrom } = await import("../src/direction.mjs");
 const { editRules } = await import("../src/edit.mjs");
-const { IMAGE_PRICE, PRICES_AS_OF, READ_PRICE, renderResolution, usd, videoCost } = await import("../src/pricing.mjs");
+const { imagePrice, priceLinks, pricesAsOf, readPrice, renderResolution, usd, videoCost } = await import("../src/pricing.mjs");
 const { tools } = await import("../src/media.mjs");
-const { api, BILLING_URL, SIGNUP_URL } = await import("../src/zurelay.mjs");
+const { api, checkGeminiKey, checkKieKey, SIGNUP_URL, topUpUrl, useOwnKeys } = await import("../src/zurelay.mjs");
 
 const BOOLEAN_FLAGS = new Set(["yes", "y", "again", "remap", "help", "h", "detach", "auto"]);
 
@@ -164,12 +164,14 @@ async function printCost(project) {
   const sends = settings.mode === "replace";
   const res = renderResolution(settings.resolution, sends);
   const video = videoCost({ seconds: settings.durationSeconds, resolution: res, referenceSeconds: sends ? info.clipSeconds ?? settings.durationSeconds : 0 });
-  const images = (frames + cast) * IMAGE_PRICE;
-  out(`\nEstimated Zurelay cost for ${project.name} (prices as of ${PRICES_AS_OF}):`);
+  const images = (frames + cast) * imagePrice();
+  const read = readPrice();
+  const where = useOwnKeys() ? "your Gemini and Kie accounts" : "Zurelay";
+  out(`\nEstimated cost for ${project.name} on ${where} (prices as of ${pricesAsOf()}):`);
   out(`  Video: Seedance 2.5, ${settings.durationSeconds}s at ${res}: ${usd(video.output)}${video.reference ? ` + ${usd(video.reference)} for the ${info.clipSeconds}s reference clip` : ""}`);
   if (frames + cast) out(`  Images: ${cast ? "1 cast face" : ""}${cast && frames ? " + " : ""}${frames ? `up to ${frames} shot frames` : ""} on GPT Image 2.5: about ${usd(images)}`);
-  out(`  Reading the ad: about ${usd(READ_PRICE)}`);
-  out(`  Total: about ${usd(video.total + images + READ_PRICE)}   (failed videos are free; live prices: https://zurelay.com/models)`);
+  out(`  Reading the ad: about ${usd(read)}`);
+  out(`  Total: about ${usd(video.total + images + read)}   (failed videos are not charged; live prices: ${priceLinks()})`);
   const draft = videoCost({ seconds: settings.durationSeconds, resolution: "480p", referenceSeconds: sends ? info.clipSeconds ?? settings.durationSeconds : 0 });
   if (res !== "480p") out(`  Tip: a 480p draft of the same video costs ${usd(draft.total)}.`);
 }
@@ -183,24 +185,52 @@ async function doctor() {
   const { spawnSync } = await import("node:child_process");
   const yt = spawnSync("yt-dlp", ["--version"], { encoding: "utf8", windowsHide: true });
   out(`yt-dlp  ${yt.status === 0 ? `ok (${String(yt.stdout).trim()})` : "not installed (optional: Facebook Ad Library links and a fallback for TikTok/Instagram)"}`);
-  const key = String(process.env.ZURELAY_API_KEY ?? "").trim();
-  if (!key) {
-    out(`Zurelay key MISSING - make one at ${SIGNUP_URL}, then put ZURELAY_API_KEY=zr_live_... in a .env file here`);
+  const gemini = String(process.env.GEMINI_API_KEY ?? "").trim();
+  const kie = String(process.env.KIE_API_KEY ?? "").trim();
+  const zurelay = String(process.env.ZURELAY_API_KEY ?? "").trim();
+  if (gemini && kie) {
+    out("Provider: own keys (Gemini reads and writes text, Kie makes images and video)");
+    try {
+      const model = await checkGeminiKey();
+      out(`Gemini key ok (${tail(gemini)}, ${model})`);
+    } catch (e) {
+      out(`Gemini key problem: ${e.message}`);
+    }
+    try {
+      const credits = await checkKieKey();
+      const balance = typeof credits === "number" ? `, ${credits} credits` : "";
+      out(`Kie key ok (${tail(kie)}${balance})`);
+    } catch (e) {
+      out(`Kie key problem: ${e.message}`);
+    }
+    return;
+  }
+  if (gemini || kie) {
+    out(`Own keys need both GEMINI_API_KEY and KIE_API_KEY. ${gemini ? "Gemini is set" : "Gemini is missing"}; ${kie ? "Kie is set" : "Kie is missing"}.`);
+  }
+  if (!zurelay) {
+    out("No API keys. Set GEMINI_API_KEY and KIE_API_KEY (https://aistudio.google.com/apikey and https://kie.ai), or ZURELAY_API_KEY from https://zurelay.com.");
     return;
   }
   try {
     await api("GET", "/videos?limit=1", { timeoutMs: 20_000, retries: 1, label: "key check" });
-    out(`Zurelay key ok (…${key.slice(-4)})`);
+    out(`Zurelay key ok (${tail(zurelay)})`);
   } catch (e) {
     out(`Zurelay key problem: ${e.message}`);
   }
+}
+
+function tail(value) {
+  const text = String(value ?? "").trim();
+  return text ? `…${text.slice(-4)}` : "";
 }
 
 function report(result, project) {
   if (result.needsConfirm) {
     const c = result.cost;
     out(`\nReady to render ${project.name}: ${result.renderPlan.seconds}s at ${result.renderPlan.resolution}, ${result.renderPlan.referenceImages.length} reference image(s)${result.renderPlan.referenceVideo ? " + the original clip" : ""}.`);
-    out(`This costs about ${usd(c.total)} on Zurelay${c.reference ? ` (${usd(c.output)} video + ${usd(c.reference)} for the reference clip)` : ""}. Failed videos are free.`);
+    const where = useOwnKeys() ? "your Gemini and Kie accounts" : "Zurelay";
+    out(`This costs about ${usd(c.total)} on ${where}${c.reference ? ` (${usd(c.output)} video + ${usd(c.reference)} for the reference clip)` : ""}. Failed videos are not charged.`);
     out(`Run again with --yes to start it:  zuverse render ${project.name} --yes`);
     return;
   }
@@ -208,12 +238,12 @@ function report(result, project) {
   else if (result.status === "failed") {
     out(`\nThe video failed: ${result.error}`);
     process.exitCode = 1;
-  } else out(`\nStill rendering (Zurelay video ${result.render.videoId}). Check again with:  zuverse status ${project.name}`);
+  } else out(`\nStill rendering (${useOwnKeys() ? "Kie" : "Zurelay"} video ${result.render.videoId}). Check again with:  zuverse status ${project.name}`);
 }
 
 const HELP = `Zuverse - reverse-engineer any video ad, then remake it as your own.
 
-  zuverse doctor                          check Node, ffmpeg, yt-dlp and your Zurelay key
+  zuverse doctor                          check Node, ffmpeg, yt-dlp and your API keys
   zuverse fetch <link|file> [--name n]    get the ad (TikTok, Instagram, Facebook Ad Library, video link or file)
         [--html saved.html --ad <id>]       ...or from a saved Facebook Ad Library page
   zuverse read [project]                  read it shot by shot (Gemini 3.1 Pro) and measure the cuts
@@ -224,7 +254,7 @@ const HELP = `Zuverse - reverse-engineer any video ad, then remake it as your ow
   zuverse cast [project] [--again]        cast a similar but different person (GPT Image 2.5)
   zuverse frames [project] [--remap]      "new" mode: map every shot and draw it fresh
   zuverse prompt [project]                build the Seedance prompt (prompt.txt) and its references
-  zuverse cost [project]                  what it will cost on Zurelay
+  zuverse cost [project]                  what it will cost (Zurelay, or Gemini + Kie when those keys are set)
   zuverse render [project] --yes          make the video (Seedance 2.5) and download it
   zuverse status [project]                keep waiting for a render that is still going
   zuverse make [project] --yes            cast + frames + prompt + render in one go
@@ -253,7 +283,7 @@ Settings (zuverse set, or as --flags on go):
   script="..."            your own words for the person to say
 
 Project defaults to the most recent one. Projects live in ./zuverse-projects (or --dir / ZUVERSE_PROJECTS).
-API key: ZURELAY_API_KEY in a .env file. Get one at ${SIGNUP_URL}`;
+API keys, in a .env file: GEMINI_API_KEY and KIE_API_KEY together (your own accounts), or ZURELAY_API_KEY from ${SIGNUP_URL}.`;
 
 async function main() {
   const { positionals, flags, multi } = parseArgs(process.argv.slice(2));
@@ -416,6 +446,6 @@ async function main() {
 
 main().catch((e) => {
   process.stderr.write(`\nError: ${e?.message ?? e}\n`);
-  if (/balance/i.test(String(e?.message))) process.stderr.write(`Top up at ${BILLING_URL}\n`);
+  if (/balance/i.test(String(e?.message))) process.stderr.write(`Top up at ${topUpUrl()}\n`);
   process.exitCode = 1;
 });

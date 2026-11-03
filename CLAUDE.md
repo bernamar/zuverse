@@ -11,8 +11,10 @@ First run in a fresh clone:
 
 1. `npm install` (downloads ffmpeg too)
 2. `node bin/zuverse.mjs doctor`
-3. If the Zurelay key is missing, ask the user for one (https://zurelay.com, API keys) and have them put
-   `ZURELAY_API_KEY=zr_live_...` in `.env` (gitignored). Never print, echo or commit the key.
+3. Keys live in `.env` (gitignored). If `GEMINI_API_KEY` and `KIE_API_KEY` are both set, Zuverse uses those
+   (Gemini for reading and text, Kie for images and video). Otherwise ask for a Zurelay key
+   (https://zurelay.com, API keys) and have them put `ZURELAY_API_KEY=zr_live_...` in `.env`.
+   Never print, echo or commit a key.
 
 Rendering costs the user money: show `node bin/zuverse.mjs cost <project>` and get a yes before any command with
 `--yes`.
