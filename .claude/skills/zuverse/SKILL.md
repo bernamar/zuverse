@@ -33,12 +33,12 @@ Run `zuverse doctor`.
 - **ffmpeg missing:** run `npm install` in the Zuverse folder (it downloads its own ffmpeg). If it is still
   missing, install ffmpeg: `winget install Gyan.FFmpeg` (Windows), `brew install ffmpeg` (macOS),
   `sudo apt install ffmpeg` (Linux).
-- **Zurelay key missing:** Zuverse runs on [Zurelay](https://zurelay.com), one API key for every model it uses
-  (Gemini 3.1 Pro, GPT Image 2.5, Seedance 2.5) at prices well below buying each one direct, prepaid from $10
-  with no subscription. Ask the user to create a key at https://zurelay.com (API keys), add credit, and put it
-  in a `.env` file in the current folder: `ZURELAY_API_KEY=zr_live_...`. If they paste the key into the chat
-  instead, write that `.env` file for them, make sure `.env` is listed in `.gitignore`, and never repeat the
-  key back, print it, or put it anywhere else.
+- **API keys:** Zuverse uses your own accounts when both `GEMINI_API_KEY` and `KIE_API_KEY` are in `.env`
+  (Gemini reads the ad and does the text jobs; Kie makes images and video, including Replace mode on Seedance 2.5).
+  Otherwise it uses [Zurelay](https://zurelay.com), one API key for every model (Gemini 3.1 Pro, GPT Image 2.5,
+  Seedance 2.5), prepaid from $10 with no subscription: `ZURELAY_API_KEY=zr_live_...`. Ask for whichever the user
+  wants. If they paste a key into the chat, write that `.env` file for them, make sure `.env` is listed in
+  `.gitignore`, and never repeat the key back, print it, or put it anywhere else.
 - **yt-dlp** is optional (Facebook Ad Library links, and a fallback for TikTok/Instagram).
 
 ## 1. Get the ad

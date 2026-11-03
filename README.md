@@ -93,6 +93,36 @@ file next to where you run Zuverse:
 ZURELAY_API_KEY=zr_live_your_key_here
 ```
 
+## Own keys (Gemini + Kie)
+
+Zuverse can run on your own accounts. Put both keys in `.env`:
+
+```bash
+GEMINI_API_KEY=your_gemini_key
+KIE_API_KEY=your_kie_key
+```
+
+When both are set, they are used. Gemini reads the ad and does the short text jobs (the new voice, who says which line, word timing). Kie makes the images and the video. Leave either one unset and Zuverse stays on Zurelay.
+
+| Job | Model | Where |
+| --- | --- | --- |
+| Reading the ad, voice, word timing | Gemini 3.1 Pro Preview (`gemini-3.1-pro-preview`) and Gemini 3.8 Flash for the short text | [Google AI Studio](https://aistudio.google.com/apikey) |
+| Cast face and shot frames | GPT Image 2.5 Sunburst | [Kie](https://kie.ai) ([docs](https://docs.kie.ai)) |
+| The video, including Replace mode | Seedance 2.5 (`bytedance/seedance-2-5`) | Kie |
+
+Kie needs a public URL for every photo and clip. Zuverse uploads them with [Kie's file upload API](https://docs.kie.ai/file-upload-api/quickstart) (files are deleted after 24 hours). Seedance 2.5 on Kie accepts a reference video, so Replace the person works: the original clip goes up as `reference_video_urls` next to the new face. If the video model you select cannot take a reference clip, render stops and tells you to set `mode=new`.
+
+Prices below are from [kie.ai/pricing](https://kie.ai/pricing) and the [Gemini pricing page](https://ai.google.dev/gemini-api/docs/pricing) as of October 2026. `zuverse cost` uses these when your own keys are set.
+
+| What | Price |
+| --- | --- |
+| Reading a 30 s ad | about $0.07 on Gemini 3.1 Pro (token estimate) |
+| Each image at 1K | $0.03 |
+| Video, no reference clip | $0.140/s at 480p, $0.315/s at 720p, $0.790/s at 1080p |
+| Video with a reference clip | $0.085/s at 480p, $0.190/s at 720p, $0.475/s at 1080p, charged on the clip's seconds and the output seconds |
+
+Failed Kie tasks are not charged. The new person's voice is still a short description Gemini reads from their photo; Seedance speaks it. There is no separate voice clone.
+
 ## Use it without Claude
 
 Zuverse is a plain Node.js CLI (Node 18+, no build step).
@@ -100,7 +130,7 @@ Zuverse is a plain Node.js CLI (Node 18+, no build step).
 ```bash
 git clone https://github.com/zutrue/zuverse && cd zuverse
 npm install           # also downloads ffmpeg
-cp .env.example .env  # then paste your Zurelay key into .env
+cp .env.example .env  # then paste a Zurelay key, or both GEMINI_API_KEY and KIE_API_KEY
 node bin/zuverse.mjs doctor
 ```
 
